@@ -7,16 +7,33 @@
 #define INITIAL_CAPACITY 10
 #define MAX_BUFFER_SIZE 1024
 
-typedef struct {
+typedef struct
+{
     char **lines;
     int count;
     int capacity;
 } Document;
 
+typedef struct
+{
+    char **lines;
+    int count;
+    int capacity;
+} DocumentSnapshot;
+
+static DocumentSnapshot undo_snapshot = {NULL, 0, 0};
+static int undo_available = 0;
+
 /* Function Declarations */
 void init_document(Document *doc);
 void free_document(Document *doc);
 int append_line(Document *doc, const char *text);
+int insert_line(Document *doc, int line_num, const char *text);
+int delete_line(Document *doc, int line_num);
+int save_undo_snapshot(const Document *doc);
+void clear_undo_snapshot(void);
+void undo_document(Document *doc);
+int count_words(const Document *doc);
 void display_document(const Document *doc);
 int save_document(const Document *doc, const char *filename);
 int load_document(Document *doc, const char *filename);
@@ -30,7 +47,6 @@ void print_help(void);
 void trim_trailing_whitespace(char *str);
 int parse_tokens(char *input, char *tokens[], int max_tokens);
 const char *get_command_argument(const char *input_buffer);
-
 
 /* -------------------------------------------------------------------------- */
 /* Main Program                                                               */
@@ -50,16 +66,19 @@ int main(void)
     printf("=======================================================\n");
     printf("Type 'help' to view available commands.\n\n");
 
-    while (1) {
+    while (1)
+    {
         printf("line-editor> ");
 
-        if (!fgets(input_buffer, sizeof(input_buffer), stdin)) {
+        if (!fgets(input_buffer, sizeof(input_buffer), stdin))
+        {
             break;
         }
 
         trim_trailing_whitespace(input_buffer);
 
-        if (input_buffer[0] == '\0') {
+        if (input_buffer[0] == '\0')
+        {
             continue;
         }
 
@@ -71,114 +90,208 @@ int main(void)
 
         int token_count = parse_tokens(parse_copy, tokens, 10);
 
-        if (token_count == 0) {
+        if (token_count == 0)
+        {
             continue;
         }
 
         char *cmd = tokens[0];
 
         /* Convert command to lowercase */
-        for (int i = 0; cmd[i] != '\0'; i++) {
+        for (int i = 0; cmd[i] != '\0'; i++)
+        {
             cmd[i] = (char)tolower((unsigned char)cmd[i]);
         }
 
-
         /* ---------------- EXIT / QUIT ---------------- */
 
-        if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0) {
+        if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0)
+        {
             printf("Exiting Line Editor. Goodbye!\n");
             break;
         }
 
-
         /* ---------------- HELP ---------------- */
 
-        else if (strcmp(cmd, "help") == 0) {
-            if (token_count != 1) {
+        else if (strcmp(cmd, "help") == 0)
+        {
+            if (token_count != 1)
+            {
                 printf("Usage: help\n");
-            } else {
+            }
+            else
+            {
                 print_help();
             }
         }
 
-
         /* ---------------- DISPLAY ---------------- */
 
-        else if (strcmp(cmd, "display") == 0) {
-            if (token_count != 1) {
+        else if (strcmp(cmd, "display") == 0)
+        {
+            if (token_count != 1)
+            {
                 printf("Usage: display\n");
-            } else {
+            }
+            else
+            {
                 display_document(&doc);
             }
         }
 
-
         /* ---------------- APPEND ---------------- */
 
         else if (strcmp(cmd, "append") == 0 ||
-                 strcmp(cmd, "add") == 0) {
+                 strcmp(cmd, "add") == 0)
+        {
 
             const char *arg_text = get_command_argument(input_buffer);
 
-            if (!arg_text || *arg_text == '\0') {
+            if (!arg_text || *arg_text == '\0')
+            {
                 printf("Error: Missing text to append. Usage: append <text>\n");
-            } else {
-                if (append_line(&doc, arg_text)) {
+            }
+            else
+            {
+                if (append_line(&doc, arg_text))
+                {
                     printf("Line %d added.\n", doc.count);
-                } else {
+                }
+                else
+                {
                     printf("Error: Could not add line.\n");
                 }
             }
         }
 
+        /* ---------------- INSERT ---------------- */
+
+        else if (strcmp(cmd, "insert") == 0)
+        {
+            if (token_count != 3)
+            {
+                printf("Error: Usage: insert <line_number> <text>\n");
+                printf("Tip: Use quotes for multi-word phrases.\n");
+                printf("Example: insert 1 \"Hello world\"\n");
+            }
+            else
+            {
+                char *endptr;
+                long line_value = strtol(tokens[1], &endptr, 10);
+
+                if (*tokens[1] == '\0' ||
+                    *endptr != '\0' ||
+                    line_value < 1 ||
+                    line_value > 2147483647L)
+                {
+                    printf("Error: Invalid line number '%s'.\n", tokens[1]);
+                }
+                else
+                {
+                    if (save_undo_snapshot(&doc))
+                    {
+                        if (!insert_line(&doc, (int)line_value, tokens[2]))
+                        {
+                            clear_undo_snapshot();
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ---------------- DELETE ---------------- */
+
+        else if (strcmp(cmd, "delete") == 0)
+        {
+            if (token_count != 2)
+            {
+                printf("Error: Usage: delete <line_number>\n");
+            }
+            else
+            {
+                char *endptr;
+                long line_value = strtol(tokens[1], &endptr, 10);
+
+                if (*tokens[1] == '\0' ||
+                    *endptr != '\0' ||
+                    line_value < 1 ||
+                    line_value > 2147483647L)
+                {
+                    printf("Error: Invalid line number '%s'.\n", tokens[1]);
+                }
+                else
+                {
+                    if (save_undo_snapshot(&doc))
+                    {
+                        if (!delete_line(&doc, (int)line_value))
+                        {
+                            clear_undo_snapshot();
+                        }
+                    }
+                }
+            }
+        }
 
         /* ---------------- SAVE ---------------- */
 
-        else if (strcmp(cmd, "save") == 0) {
+        else if (strcmp(cmd, "save") == 0)
+        {
 
-            if (token_count != 2) {
+            if (token_count != 2)
+            {
                 printf("Error: Usage: save <filename>\n");
-            } else {
+            }
+            else
+            {
                 save_document(&doc, tokens[1]);
             }
         }
 
-
         /* ---------------- LOAD ---------------- */
 
-        else if (strcmp(cmd, "load") == 0) {
+        else if (strcmp(cmd, "load") == 0)
+        {
 
-            if (token_count != 2) {
+            if (token_count != 2)
+            {
                 printf("Error: Usage: load <filename>\n");
-            } else {
+            }
+            else
+            {
                 load_document(&doc, tokens[1]);
             }
         }
 
-
         /* ---------------- SEARCH ---------------- */
 
-        else if (strcmp(cmd, "search") == 0) {
+        else if (strcmp(cmd, "search") == 0)
+        {
 
             const char *query = get_command_argument(input_buffer);
 
-            if (!query || *query == '\0') {
+            if (!query || *query == '\0')
+            {
                 printf("Error: Missing search term. Usage: search <word_or_phrase>\n");
-            } else {
+            }
+            else
+            {
                 search_document(&doc, query);
             }
         }
 
-
         /* ---------------- REPLACE ---------------- */
 
-        else if (strcmp(cmd, "replace") == 0) {
+        else if (strcmp(cmd, "replace") == 0)
+        {
 
-            if (token_count != 4) {
+            if (token_count != 4)
+            {
                 printf("Error: Usage: replace <line_number> <old_text> <new_text>\n");
                 printf("Tip: Use quotes for multi-word phrases.\n");
                 printf("Example: replace 1 \"old word\" \"new word\"\n");
-            } else {
+            }
+            else
+            {
 
                 char *endptr;
                 long line_value = strtol(tokens[1], &endptr, 10);
@@ -186,49 +299,94 @@ int main(void)
                 if (*tokens[1] == '\0' ||
                     *endptr != '\0' ||
                     line_value < 1 ||
-                    line_value > 2147483647L) {
+                    line_value > 2147483647L)
+                {
 
                     printf("Error: Invalid line number '%s'.\n", tokens[1]);
-                } else {
-
-                    replace_in_line(
-                        &doc,
-                        (int)line_value,
-                        tokens[2],
-                        tokens[3]
-                    );
+                }
+                else
+                {
+                    if (save_undo_snapshot(&doc))
+                    {
+                        if (!replace_in_line(
+                                &doc,
+                                (int)line_value,
+                                tokens[2],
+                                tokens[3]))
+                        {
+                            clear_undo_snapshot();
+                        }
+                    }
                 }
             }
         }
 
-
         /* ---------------- REPLACE ALL ---------------- */
 
-        else if (strcmp(cmd, "replaceall") == 0) {
+        else if (strcmp(cmd, "replaceall") == 0)
+        {
 
-            if (token_count != 3) {
+            if (token_count != 3)
+            {
                 printf("Error: Usage: replaceall <old_text> <new_text>\n");
                 printf("Tip: Use quotes for multi-word phrases.\n");
                 printf("Example: replaceall \"old text\" \"new text\"\n");
-            } else {
-                replace_all(&doc, tokens[1], tokens[2]);
+            }
+            else
+            {
+                if (save_undo_snapshot(&doc))
+                {
+                    if (!replace_all(&doc, tokens[1], tokens[2]))
+                    {
+                        clear_undo_snapshot();
+                    }
+                }
             }
         }
 
+        /* ---------------- UNDO ---------------- */
+
+        else if (strcmp(cmd, "undo") == 0)
+        {
+            if (token_count != 1)
+            {
+                printf("Usage: undo\n");
+            }
+            else
+            {
+                undo_document(&doc);
+            }
+        }
+
+        /* ---------------- COUNT ---------------- */
+
+        else if (strcmp(cmd, "count") == 0)
+        {
+            if (token_count != 1)
+            {
+                printf("Usage: count\n");
+            }
+            else
+            {
+                printf("Lines: %d\n", doc.count);
+                printf("Words: %d\n", count_words(&doc));
+            }
+        }
 
         /* ---------------- UNKNOWN COMMAND ---------------- */
 
-        else {
+        else
+        {
             printf("Unknown command '%s'. Type 'help' for a list of valid commands.\n",
                    cmd);
         }
     }
 
+    clear_undo_snapshot();
     free_document(&doc);
 
     return 0;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Document & Memory Management                                               */
@@ -241,23 +399,26 @@ void init_document(Document *doc)
 
     doc->lines = malloc(doc->capacity * sizeof(char *));
 
-    if (!doc->lines) {
+    if (!doc->lines)
+    {
         fprintf(stderr,
                 "Fatal Memory Error: Failed to allocate document.\n");
         exit(EXIT_FAILURE);
     }
 }
 
-
 void free_document(Document *doc)
 {
-    if (doc == NULL) {
+    if (doc == NULL)
+    {
         return;
     }
 
-    if (doc->lines != NULL) {
+    if (doc->lines != NULL)
+    {
 
-        for (int i = 0; i < doc->count; i++) {
+        for (int i = 0; i < doc->count; i++)
+        {
             free(doc->lines[i]);
         }
 
@@ -269,6 +430,131 @@ void free_document(Document *doc)
     doc->capacity = 0;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Undo                                                                      */
+/* -------------------------------------------------------------------------- */
+
+void clear_undo_snapshot(void)
+{
+    if (undo_snapshot.lines != NULL)
+    {
+        for (int i = 0; i < undo_snapshot.count; i++)
+        {
+            free(undo_snapshot.lines[i]);
+        }
+
+        free(undo_snapshot.lines);
+        undo_snapshot.lines = NULL;
+    }
+
+    undo_snapshot.count = 0;
+    undo_snapshot.capacity = 0;
+    undo_available = 0;
+}
+
+int save_undo_snapshot(const Document *doc)
+{
+    if (doc == NULL)
+    {
+        return 0;
+    }
+
+    DocumentSnapshot new_snapshot;
+    new_snapshot.count = doc->count;
+    new_snapshot.capacity = doc->capacity;
+    new_snapshot.lines = malloc(new_snapshot.capacity * sizeof(char *));
+
+    if (!new_snapshot.lines)
+    {
+        fprintf(stderr,
+                "Memory Error: Failed to allocate undo snapshot.\n");
+        return 0;
+    }
+
+    for (int i = 0; i < new_snapshot.count; i++)
+    {
+        size_t len = strlen(doc->lines[i]);
+        new_snapshot.lines[i] = malloc(len + 1);
+
+        if (!new_snapshot.lines[i])
+        {
+            fprintf(stderr,
+                    "Memory Error: Failed to copy undo snapshot.\n");
+
+            for (int j = 0; j < i; j++)
+            {
+                free(new_snapshot.lines[j]);
+            }
+
+            free(new_snapshot.lines);
+            return 0;
+        }
+
+        strcpy(new_snapshot.lines[i], doc->lines[i]);
+    }
+
+    clear_undo_snapshot();
+    undo_snapshot = new_snapshot;
+    undo_available = 1;
+
+    return 1;
+}
+
+void undo_document(Document *doc)
+{
+    if (doc == NULL || !undo_available)
+    {
+        printf("Nothing to undo.\n");
+        return;
+    }
+
+    free_document(doc);
+
+    doc->lines = undo_snapshot.lines;
+    doc->count = undo_snapshot.count;
+    doc->capacity = undo_snapshot.capacity;
+
+    undo_snapshot.lines = NULL;
+    undo_snapshot.count = 0;
+    undo_snapshot.capacity = 0;
+    undo_available = 0;
+
+    printf("Undo successful.\n");
+}
+
+/* -------------------------------------------------------------------------- */
+/* Word Count                                                                 */
+/* -------------------------------------------------------------------------- */
+
+int count_words(const Document *doc)
+{
+    if (doc == NULL)
+    {
+        return 0;
+    }
+
+    int words = 0;
+
+    for (int i = 0; i < doc->count; i++)
+    {
+        int in_word = 0;
+
+        for (const char *p = doc->lines[i]; *p != '\0'; p++)
+        {
+            if (isspace((unsigned char)*p))
+            {
+                in_word = 0;
+            }
+            else if (!in_word)
+            {
+                words++;
+                in_word = 1;
+            }
+        }
+    }
+
+    return words;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Append Line                                                                */
@@ -276,19 +562,22 @@ void free_document(Document *doc)
 
 int append_line(Document *doc, const char *text)
 {
-    if (doc == NULL || text == NULL) {
+    if (doc == NULL || text == NULL)
+    {
         return 0;
     }
 
     /* Expand pointer array if necessary */
-    if (doc->count >= doc->capacity) {
+    if (doc->count >= doc->capacity)
+    {
 
         int new_capacity = doc->capacity * 2;
 
         char **new_lines =
             realloc(doc->lines, new_capacity * sizeof(char *));
 
-        if (!new_lines) {
+        if (!new_lines)
+        {
             fprintf(stderr,
                     "Memory Error: Failed to expand document.\n");
             return 0;
@@ -302,7 +591,8 @@ int append_line(Document *doc, const char *text)
 
     char *new_line = malloc(len + 1);
 
-    if (!new_line) {
+    if (!new_line)
+    {
         fprintf(stderr,
                 "Memory Error: Failed to allocate memory for line.\n");
         return 0;
@@ -316,6 +606,102 @@ int append_line(Document *doc, const char *text)
     return 1;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Insert Line                                                                */
+/* -------------------------------------------------------------------------- */
+
+int insert_line(Document *doc, int line_num, const char *text)
+{
+    if (doc == NULL || text == NULL || text[0] == '\0')
+    {
+        printf("Error: Text to insert cannot be empty.\n");
+        return 0;
+    }
+
+    if (line_num < 1 || line_num > doc->count + 1)
+    {
+        printf("Error: Invalid insertion line number %d. Valid range is 1 to %d.\n",
+               line_num,
+               doc->count + 1);
+        return 0;
+    }
+
+    size_t len = strlen(text);
+    char *new_line = malloc(len + 1);
+
+    if (!new_line)
+    {
+        fprintf(stderr,
+                "Memory Error: Failed to allocate memory for inserted line.\n");
+        return 0;
+    }
+
+    strcpy(new_line, text);
+
+    if (doc->count >= doc->capacity)
+    {
+        int new_capacity = doc->capacity * 2;
+        char **new_lines =
+            realloc(doc->lines, new_capacity * sizeof(char *));
+
+        if (!new_lines)
+        {
+            fprintf(stderr,
+                    "Memory Error: Failed to expand document.\n");
+            free(new_line);
+            return 0;
+        }
+
+        doc->lines = new_lines;
+        doc->capacity = new_capacity;
+    }
+
+    int insert_index = line_num - 1;
+
+    for (int i = doc->count; i > insert_index; i--)
+    {
+        doc->lines[i] = doc->lines[i - 1];
+    }
+
+    doc->lines[insert_index] = new_line;
+    doc->count++;
+
+    printf("Line inserted at position %d.\n", line_num);
+    return 1;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Delete Line                                                                */
+/* -------------------------------------------------------------------------- */
+
+int delete_line(Document *doc, int line_num)
+{
+    if (doc == NULL || doc->count == 0)
+    {
+        printf("Error: Document is empty.\n");
+        return 0;
+    }
+
+    if (line_num < 1 || line_num > doc->count)
+    {
+        printf("Error: Invalid line number %d. Valid range is 1 to %d.\n",
+               line_num,
+               doc->count);
+        return 0;
+    }
+
+    int delete_index = line_num - 1;
+    free(doc->lines[delete_index]);
+
+    for (int i = delete_index; i < doc->count - 1; i++)
+    {
+        doc->lines[i] = doc->lines[i + 1];
+    }
+
+    doc->count--;
+    printf("Line %d deleted.\n", line_num);
+    return 1;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Display Document                                                           */
@@ -323,7 +709,8 @@ int append_line(Document *doc, const char *text)
 
 void display_document(const Document *doc)
 {
-    if (doc->count == 0) {
+    if (doc->count == 0)
+    {
         printf("(The document is currently empty)\n");
         return;
     }
@@ -332,13 +719,13 @@ void display_document(const Document *doc)
            doc->count,
            doc->count == 1 ? "" : "s");
 
-    for (int i = 0; i < doc->count; i++) {
+    for (int i = 0; i < doc->count; i++)
+    {
         printf("%d. %s\n", i + 1, doc->lines[i]);
     }
 
     printf("--- Document End ---\n\n");
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Save Document                                                              */
@@ -348,22 +735,26 @@ int save_document(const Document *doc, const char *filename)
 {
     FILE *fp = fopen(filename, "w");
 
-    if (!fp) {
+    if (!fp)
+    {
         printf("Error: Could not open file '%s' for writing.\n",
                filename);
         return 0;
     }
 
-    for (int i = 0; i < doc->count; i++) {
+    for (int i = 0; i < doc->count; i++)
+    {
 
-        if (fprintf(fp, "%s\n", doc->lines[i]) < 0) {
+        if (fprintf(fp, "%s\n", doc->lines[i]) < 0)
+        {
             printf("Error: Failed while writing to '%s'.\n", filename);
             fclose(fp);
             return 0;
         }
     }
 
-    if (fclose(fp) != 0) {
+    if (fclose(fp) != 0)
+    {
         printf("Error: Failed to close file '%s'.\n", filename);
         return 0;
     }
@@ -375,7 +766,6 @@ int save_document(const Document *doc, const char *filename)
     return 1;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* Load Document                                                              */
 /* -------------------------------------------------------------------------- */
@@ -384,7 +774,8 @@ int load_document(Document *doc, const char *filename)
 {
     FILE *fp = fopen(filename, "r");
 
-    if (!fp) {
+    if (!fp)
+    {
         printf("Error: Could not open file '%s' for reading.\n",
                filename);
         return 0;
@@ -400,11 +791,13 @@ int load_document(Document *doc, const char *filename)
     char buffer[MAX_BUFFER_SIZE];
     int lines_loaded = 0;
 
-    while (fgets(buffer, sizeof(buffer), fp)) {
+    while (fgets(buffer, sizeof(buffer), fp))
+    {
 
         trim_trailing_whitespace(buffer);
 
-        if (!append_line(&temp, buffer)) {
+        if (!append_line(&temp, buffer))
+        {
             printf("Error: Memory allocation failed while loading line %d.\n",
                    lines_loaded + 1);
 
@@ -417,7 +810,8 @@ int load_document(Document *doc, const char *filename)
         lines_loaded++;
     }
 
-    if (ferror(fp)) {
+    if (ferror(fp))
+    {
         printf("Error: Failed while reading '%s'.\n", filename);
 
         free_document(&temp);
@@ -440,19 +834,20 @@ int load_document(Document *doc, const char *filename)
     return 1;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* Search                                                                     */
 /* -------------------------------------------------------------------------- */
 
 void search_document(const Document *doc, const char *query)
 {
-    if (doc->count == 0) {
+    if (doc->count == 0)
+    {
         printf("Document is empty. Nothing to search.\n");
         return;
     }
 
-    if (query == NULL || *query == '\0') {
+    if (query == NULL || *query == '\0')
+    {
         printf("Error: Search query cannot be empty.\n");
         return;
     }
@@ -470,40 +865,45 @@ void search_document(const Document *doc, const char *query)
 
     if (qlen >= 2 &&
         clean_query[0] == '"' &&
-        clean_query[qlen - 1] == '"') {
+        clean_query[qlen - 1] == '"')
+    {
 
         clean_query[qlen - 1] = '\0';
 
         memmove(
             clean_query,
             clean_query + 1,
-            qlen
-        );
+            qlen);
     }
 
-    if (clean_query[0] == '\0') {
+    if (clean_query[0] == '\0')
+    {
         printf("Error: Search query cannot be empty.\n");
         return;
     }
 
     int match_count = 0;
 
-    for (int i = 0; i < doc->count; i++) {
+    for (int i = 0; i < doc->count; i++)
+    {
 
-        if (strstr(doc->lines[i], clean_query) != NULL) {
+        if (strstr(doc->lines[i], clean_query) != NULL)
+        {
             printf("Found in line %d\n", i + 1);
             match_count++;
         }
     }
 
-    if (match_count == 0) {
+    if (match_count == 0)
+    {
         printf("Phrase \"%s\" was not found in the document.\n",
                clean_query);
-    } else {
+    }
+    else
+    {
         printf("Found in %d line(s).\n", match_count);
     }
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Replace String                                                             */
@@ -514,13 +914,15 @@ char *replace_in_string(const char *src,
                         const char *new_text,
                         int *count_out)
 {
-    if (count_out == NULL) {
+    if (count_out == NULL)
+    {
         return NULL;
     }
 
     *count_out = 0;
 
-    if (src == NULL || old_text == NULL || new_text == NULL) {
+    if (src == NULL || old_text == NULL || new_text == NULL)
+    {
         return NULL;
     }
 
@@ -529,42 +931,44 @@ char *replace_in_string(const char *src,
     size_t src_len = strlen(src);
 
     /* Empty old text is not a valid replacement target */
-    if (old_len == 0) {
+    if (old_len == 0)
+    {
 
         char *copy = malloc(src_len + 1);
 
-        if (copy) {
+        if (copy)
+        {
             strcpy(copy, src);
         }
 
         return copy;
     }
 
-
     /* Count occurrences */
     size_t occurrences = 0;
     const char *tmp = src;
 
-    while ((tmp = strstr(tmp, old_text)) != NULL) {
+    while ((tmp = strstr(tmp, old_text)) != NULL)
+    {
 
         occurrences++;
 
         tmp += old_len;
     }
 
-
     /* No match */
-    if (occurrences == 0) {
+    if (occurrences == 0)
+    {
 
         char *copy = malloc(src_len + 1);
 
-        if (copy) {
+        if (copy)
+        {
             strcpy(copy, src);
         }
 
         return copy;
     }
-
 
     /*
      * Calculate resulting length safely.
@@ -577,23 +981,27 @@ char *replace_in_string(const char *src,
      */
     size_t result_len;
 
-    if (new_len >= old_len) {
+    if (new_len >= old_len)
+    {
 
         size_t increase = new_len - old_len;
 
-        if (occurrences > (SIZE_MAX - src_len) / increase) {
+        if (occurrences > (SIZE_MAX - src_len) / increase)
+        {
             fprintf(stderr,
                     "Memory Error: Replacement string is too large.\n");
             return NULL;
         }
 
         result_len = src_len + occurrences * increase;
-
-    } else {
+    }
+    else
+    {
 
         size_t decrease = old_len - new_len;
 
-        if (occurrences * decrease > src_len) {
+        if (occurrences * decrease > src_len)
+        {
             fprintf(stderr,
                     "Memory Error: Invalid replacement size.\n");
             return NULL;
@@ -602,33 +1010,36 @@ char *replace_in_string(const char *src,
         result_len = src_len - occurrences * decrease;
     }
 
-
     char *result = malloc(result_len + 1);
 
-    if (!result) {
+    if (!result)
+    {
         fprintf(stderr,
                 "Memory Error: Failed to allocate replacement buffer.\n");
         return NULL;
     }
 
-
     /* Perform replacement */
     const char *p = src;
     char *q = result;
 
-    while (*p != '\0') {
+    while (*p != '\0')
+    {
 
-        if (strncmp(p, old_text, old_len) == 0) {
+        if (strncmp(p, old_text, old_len) == 0)
+        {
 
-            if (new_len > 0) {
+            if (new_len > 0)
+            {
                 memcpy(q, new_text, new_len);
                 q += new_len;
             }
 
             p += old_len;
             (*count_out)++;
-
-        } else {
+        }
+        else
+        {
 
             *q = *p;
             q++;
@@ -641,7 +1052,6 @@ char *replace_in_string(const char *src,
     return result;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* Replace In One Line                                                        */
 /* -------------------------------------------------------------------------- */
@@ -651,24 +1061,28 @@ int replace_in_line(Document *doc,
                     const char *old_text,
                     const char *new_text)
 {
-    if (doc->count == 0) {
+    if (doc->count == 0)
+    {
         printf("Error: Document is empty.\n");
         return 0;
     }
 
-    if (line_num < 1 || line_num > doc->count) {
+    if (line_num < 1 || line_num > doc->count)
+    {
         printf("Error: Invalid line number %d. Valid range is 1 to %d.\n",
                line_num,
                doc->count);
         return 0;
     }
 
-    if (old_text == NULL || old_text[0] == '\0') {
+    if (old_text == NULL || old_text[0] == '\0')
+    {
         printf("Error: Old text cannot be empty.\n");
         return 0;
     }
 
-    if (new_text == NULL) {
+    if (new_text == NULL)
+    {
         new_text = "";
     }
 
@@ -680,15 +1094,16 @@ int replace_in_line(Document *doc,
             doc->lines[idx],
             old_text,
             new_text,
-            &replacements
-        );
+            &replacements);
 
-    if (!new_line) {
+    if (!new_line)
+    {
         printf("Error: Replacement failed due to memory error.\n");
         return 0;
     }
 
-    if (replacements > 0) {
+    if (replacements > 0)
+    {
 
         free(doc->lines[idx]);
 
@@ -697,8 +1112,9 @@ int replace_in_line(Document *doc,
         printf("Replaced %d occurrence(s) on line %d.\n",
                replacements,
                line_num);
-
-    } else {
+    }
+    else
+    {
 
         free(new_line);
 
@@ -710,7 +1126,6 @@ int replace_in_line(Document *doc,
     return replacements;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* Replace All                                                                */
 /* -------------------------------------------------------------------------- */
@@ -719,24 +1134,28 @@ int replace_all(Document *doc,
                 const char *old_text,
                 const char *new_text)
 {
-    if (doc->count == 0) {
+    if (doc->count == 0)
+    {
         printf("Error: Document is empty.\n");
         return 0;
     }
 
-    if (old_text == NULL || old_text[0] == '\0') {
+    if (old_text == NULL || old_text[0] == '\0')
+    {
         printf("Error: Old text cannot be empty.\n");
         return 0;
     }
 
-    if (new_text == NULL) {
+    if (new_text == NULL)
+    {
         new_text = "";
     }
 
     int total_replacements = 0;
     int lines_affected = 0;
 
-    for (int i = 0; i < doc->count; i++) {
+    for (int i = 0; i < doc->count; i++)
+    {
 
         int line_replacements = 0;
 
@@ -745,15 +1164,16 @@ int replace_all(Document *doc,
                 doc->lines[i],
                 old_text,
                 new_text,
-                &line_replacements
-            );
+                &line_replacements);
 
-        if (!new_line) {
+        if (!new_line)
+        {
             printf("Error: Replacement failed on line %d.\n", i + 1);
             return 0;
         }
 
-        if (line_replacements > 0) {
+        if (line_replacements > 0)
+        {
 
             free(doc->lines[i]);
 
@@ -761,20 +1181,23 @@ int replace_all(Document *doc,
 
             total_replacements += line_replacements;
             lines_affected++;
-
-        } else {
+        }
+        else
+        {
 
             free(new_line);
         }
     }
 
-    if (total_replacements > 0) {
+    if (total_replacements > 0)
+    {
 
         printf("Replaced %d occurrence(s) across %d line(s).\n",
                total_replacements,
                lines_affected);
-
-    } else {
+    }
+    else
+    {
 
         printf("Phrase \"%s\" was not found anywhere in the document.\n",
                old_text);
@@ -783,27 +1206,27 @@ int replace_all(Document *doc,
     return total_replacements;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* Trim Whitespace                                                            */
 /* -------------------------------------------------------------------------- */
 
 void trim_trailing_whitespace(char *str)
 {
-    if (!str) {
+    if (!str)
+    {
         return;
     }
 
     size_t len = strlen(str);
 
     while (len > 0 &&
-           isspace((unsigned char)str[len - 1])) {
+           isspace((unsigned char)str[len - 1]))
+    {
 
         str[len - 1] = '\0';
         len--;
     }
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Get Command Argument                                                       */
@@ -813,23 +1236,27 @@ const char *get_command_argument(const char *input_buffer)
 {
     static char argument[MAX_BUFFER_SIZE];
 
-    if (input_buffer == NULL) {
+    if (input_buffer == NULL)
+    {
         return NULL;
     }
 
     const char *p = input_buffer;
 
     /* Skip command */
-    while (*p && !isspace((unsigned char)*p)) {
+    while (*p && !isspace((unsigned char)*p))
+    {
         p++;
     }
 
     /* Skip spaces after command */
-    while (*p && isspace((unsigned char)*p)) {
+    while (*p && isspace((unsigned char)*p))
+    {
         p++;
     }
 
-    if (*p == '\0') {
+    if (*p == '\0')
+    {
         argument[0] = '\0';
         return argument;
     }
@@ -854,20 +1281,19 @@ const char *get_command_argument(const char *input_buffer)
      */
     if (len >= 2 &&
         argument[0] == '"' &&
-        argument[len - 1] == '"') {
+        argument[len - 1] == '"')
+    {
 
         argument[len - 1] = '\0';
 
         memmove(
             argument,
             argument + 1,
-            len
-        );
+            len);
     }
 
     return argument;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Tokenizer                                                                  */
@@ -880,14 +1306,17 @@ int parse_tokens(char *input,
     int count = 0;
     char *p = input;
 
-    while (*p && count < max_tokens) {
+    while (*p && count < max_tokens)
+    {
 
         /* Skip whitespace */
-        while (*p && isspace((unsigned char)*p)) {
+        while (*p && isspace((unsigned char)*p))
+        {
             p++;
         }
 
-        if (!*p) {
+        if (!*p)
+        {
             break;
         }
 
@@ -900,30 +1329,36 @@ int parse_tokens(char *input,
          * becomes one token:
          * hello world
          */
-        if (*p == '"') {
+        if (*p == '"')
+        {
 
             p++;
 
             tokens[count++] = p;
 
-            while (*p && *p != '"') {
+            while (*p && *p != '"')
+            {
                 p++;
             }
 
-            if (*p == '"') {
+            if (*p == '"')
+            {
                 *p = '\0';
                 p++;
             }
-
-        } else {
+        }
+        else
+        {
 
             tokens[count++] = p;
 
-            while (*p && !isspace((unsigned char)*p)) {
+            while (*p && !isspace((unsigned char)*p))
+            {
                 p++;
             }
 
-            if (*p) {
+            if (*p)
+            {
                 *p = '\0';
                 p++;
             }
@@ -932,7 +1367,6 @@ int parse_tokens(char *input,
 
     return count;
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Help                                                                       */
@@ -944,6 +1378,12 @@ void print_help(void)
 
     printf("  append <text>                           "
            "Add a new line of text at the end\n");
+
+    printf("  insert <line_number> <text>              "
+           "Insert a new line at the specified position\n");
+
+    printf("  delete <line_number>                    "
+           "Delete the specified line\n");
 
     printf("  display                                 "
            "Display all lines with line numbers\n");
@@ -963,6 +1403,12 @@ void print_help(void)
     printf("  replaceall <old> <new>                  "
            "Replace phrase across all lines\n");
 
+    printf("  undo                                    "
+           "Undo the most recent edit\n");
+
+    printf("  count                                   "
+           "Display line and word counts\n");
+
     printf("  help                                    "
            "Show this help message\n");
 
@@ -973,11 +1419,13 @@ void print_help(void)
 
     printf("  append Hello world\n");
     printf("  append \"This is one complete line\"\n");
+    printf("  insert 1 \"Hello world\"\n");
+    printf("  delete 2\n");
     printf("  search \"Hello world\"\n");
     printf("  replace 1 \"old text\" \"new text\"\n");
     printf("  replaceall \"old text\" \"new text\"\n");
+    printf("  undo\n");
+    printf("  count\n");
 
     printf("\n");
 }
-
-
