@@ -1,9 +1,12 @@
 # SIMPLE LINE EDITOR IN C
 
-Team Members:Manasvi,Kavya Rai.
-SRN:R25EF134,R25EF116.
-Section:A.
-Subject:Portfolio Buliding.
+Team Members:Manasvi,Kavya Rai
+
+SRN:R25EF134,R25EF116
+
+Section:A
+
+Subject:Portfolio Buliding
 
 ---
 
